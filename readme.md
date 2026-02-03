@@ -278,3 +278,189 @@ The webapp still runs on 8501 internally; only the host port is machine-specific
 * **`itool`** = invariant enforcer
 
 If something is wrong, it fails loudly and early.
+
+---
+
+## Running itool on a home-server setup
+
+This section explains how to run `itool` on an always-on home server (NUC, mini-PC, NAS, or spare machine) so tools are reachable from your LAN and survive reboots without manual intervention.
+
+---
+
+### Assumptions
+
+* The machine runs Linux with systemd
+* Docker and Docker Compose v2 are installed
+* The machine has a **stable hostname** (e.g. `homeserver`)
+* Tools are internal / trusted (no public internet exposure by default)
+
+---
+
+### Networking model (recommended)
+
+* Each tool:
+
+  * runs in its own container
+  * listens on its **container port** (`PORT` in `.env`)
+  * is mapped to a **unique host port** (from the registry)
+* Containers bind to `0.0.0.0` so they’re reachable from the LAN
+* No reverse proxy required
+
+Resulting URLs from other devices on your network:
+
+```
+http://homeserver:8611
+http://homeserver:8612
+```
+
+This is the simplest, most robust setup for a home server.
+
+---
+
+### Project configuration for LAN access
+
+In each project’s `.env`:
+
+```env
+PORT=8501
+HOST=0.0.0.0
+```
+
+Ensure the app actually listens on `0.0.0.0`:
+
+* Streamlit: `--server.address=0.0.0.0`
+* ASGI servers: `--host 0.0.0.0`
+
+If the app only binds to `127.0.0.1`, it will not be reachable from other machines.
+
+---
+
+### Docker restart behavior
+
+All tools should include in `docker-compose.yml`:
+
+```yaml
+restart: unless-stopped
+```
+
+This ensures:
+
+* Containers start automatically after a reboot
+* Tools come back online without running `itool up` again
+
+Verify Docker itself is enabled:
+
+```bash
+sudo systemctl enable docker
+```
+
+---
+
+### Firewall considerations
+
+If a firewall is enabled (e.g. `ufw`), allow the itool port range:
+
+```bash
+sudo ufw allow 8600:8999/tcp
+```
+
+Or selectively allow only ports in use:
+
+```bash
+sudo ufw allow 8611/tcp
+sudo ufw allow 8612/tcp
+```
+
+---
+
+### Name resolution on the LAN
+
+#### Option 1: Use the hostname (simplest)
+
+Most home networks already support this:
+
+```
+http://homeserver:8611
+```
+
+No additional configuration required.
+
+#### Option 2: Local DNS (optional)
+
+If you run a local DNS (router, Pi-hole, dnsmasq):
+
+* Create DNS entries pointing to the server IP:
+
+  ```
+  taskpe.homelab → 192.168.1.10
+  ```
+* Access as:
+
+  ```
+  http://taskpe.homelab:8611
+  ```
+
+This is purely cosmetic and not required for `itool`.
+
+---
+
+### Managing tools remotely
+
+From the server itself:
+
+```bash
+itool list
+itool taskpe restart
+itool search logs
+```
+
+From another machine:
+
+* Use SSH for control:
+
+  ```bash
+  ssh homeserver
+  itool taskpe restart
+  ```
+* Access the UI via browser over LAN
+
+---
+
+### Backups and persistence
+
+Machine-local state to back up:
+
+* `~/.config/itools/registry.ini`
+
+Project data:
+
+* Project directories themselves
+* Any Docker volumes defined by tools
+
+Containers can always be recreated; the registry is what preserves stable ports.
+
+---
+
+### Security notes
+
+* This setup assumes a **trusted LAN**
+* Tools are not authenticated by default
+* Do not forward these ports to the public internet without:
+
+  * authentication
+  * TLS
+  * and ideally a reverse proxy
+
+If you later need remote access, put a proxy (Caddy, Nginx) in front of selected tools explicitly—`itool` stays unchanged.
+
+---
+
+### Summary for home-server usage
+
+* Use fixed host ports from the registry
+* Bind apps to `0.0.0.0`
+* Rely on Docker’s restart policy for persistence
+* Access tools via `hostname:port`
+* Keep `itool` focused on orchestration, not networking policy
+
+This keeps the home-server setup simple, resilient, and easy to reason about.
